@@ -1,0 +1,19 @@
+# Core ML frameworks - PyTorch 2.8.0 with CUDA 12.6
+# Install these first: pip install torch==2.8.0+cu126 torchvision==0.23.0+cu126 torchaudio==2.8.0+cu126 --index-url https://download.pytorch.org/whl/cu126
+
+# Audio processing
+soundfile
+scipy
+# webrtcvad - install separately if needed: pip install webrtcvad-wheels
+
+# ML models and inference
+faster-whisper
+speechbrain
+pyannote.audio
+
+# Data handling
+numpy
+pandas
+
+# Environment variables
+python-dotenv

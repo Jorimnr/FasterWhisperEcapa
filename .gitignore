@@ -1,0 +1,15 @@
+# Virtual environment
+venv/
+
+# Environment variables and secrets
+.env
+
+# Data files
+Data/
+*.csv
+*.wav
+*.WAV
+*.mp3
+*.MP3
+segments_*/
+data storage/

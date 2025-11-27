@@ -90,6 +90,20 @@ def chunk_embed(ecapa, x, sr=16000, sec=1.6, hop=0.8, device=None):
 def cos(a, b):
     return float((a @ b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
 
+def extract_metadata_from_filename(filepath):
+    """
+    Extract speaker_id and group_id from filename.
+    Expected format: K06-{speaker_id}-A01-{group_id}-10min.wav
+    Returns (speaker_id, group_id)
+    """
+    basename = os.path.basename(filepath)
+    parts = basename.split('-')
+    if len(parts) >= 4:
+        speaker_id = parts[1]  # Between first and second "-"
+        group_id = parts[3]    # Between third and fourth "-"
+        return speaker_id, group_id
+    return None, None
+
  
 #  ----------------- Pipeline -----------------
 start_time = time.time()
@@ -99,8 +113,20 @@ timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 # 0) Collect files 
 audio_files = sorted(glob.glob("Data/*.WAV"))
+if not audio_files:
+    audio_files = sorted(glob.glob("Data/*.wav"))
 assert 2 <= len(audio_files) <= 5, f"Expected 2-5 WAVs in Data/, found {len(audio_files)}"
 print(f"Found {len(audio_files)} files: {audio_files}")
+
+# Extract metadata from filenames
+file_metadata = {}
+for audio_file in audio_files:
+    speaker_id, group_id = extract_metadata_from_filename(audio_file)
+    file_metadata[audio_file] = {
+        'speaker_id': speaker_id,
+        'group_id': group_id
+    }
+    print(f"  {os.path.basename(audio_file)} -> Speaker: {speaker_id}, Group: {group_id}")
 
 # 1) Load, normalize, (optionally) align
 wav_list = []
@@ -184,6 +210,11 @@ for audio_file, channel_idx in zip(audio_files, range(C)):
     file_start = time.time()
     print(f"Processing {channel_idx+1}/{C}: {name}")
     
+    # Get metadata for this file
+    metadata = file_metadata[audio_file]
+    speaker_id = metadata['speaker_id']
+    group_id = metadata['group_id']
+    
     # Initialize speaker statistics for this file
     file_speaker_stats[name] = {}
     file_vad_segments[name] = []  # Store segments for this file
@@ -240,6 +271,8 @@ for audio_file, channel_idx in zip(audio_files, range(C)):
         file_vad_segments[name].append(seg_audio)
         
         all_rows.append({
+            "group_id": group_id,
+            "speaker_id": speaker_id,
             "file_channel": name,
             "assigned_speaker": speaker_name,
             "start_time": seg.start,
@@ -296,7 +329,7 @@ all_rows.sort(key=lambda r: r["start_time"])
 
 # 8) Write CSV
 with open(f"transcription_{timestamp}.csv", "w", newline="", encoding="utf-8") as f:
-    writer = csv.DictWriter(f, fieldnames=["file_channel","assigned_speaker","start_time","end_time","score","text"])
+    writer = csv.DictWriter(f, fieldnames=["group_id","speaker_id","file_channel","assigned_speaker","start_time","end_time","score","text"])
     writer.writeheader()
     writer.writerows(all_rows)
 

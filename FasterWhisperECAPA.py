@@ -10,6 +10,37 @@ from speechbrain.inference import EncoderClassifier
 from scipy.signal import resample_poly
 import pandas as pd
 
+# ================== CONFIGURATION PARAMETERS ==================
+
+# Whisper Model Configuration
+WHISPER_MODEL = "large-v2"  # Options: "tiny", "base", "small", "medium", "large-v2", "large-v3"
+WHISPER_DEVICE = "cuda"   # Options: "cuda", "cpu"
+WHISPER_COMPUTE_TYPE = "float32"  # Options: "float32", "float16", "int8"
+
+# VAD (Voice Activity Detection) Parameters
+VAD_MIN_SILENCE_MS = 3000      # Milliseconds of silence before splitting segments (higher = fewer, longer segments)
+VAD_MIN_SPEECH_MS = 300        # Minimum speech duration to keep (lower = keep shorter utterances)
+VAD_THRESHOLD = 0.5            # Speech detection threshold 0-1 (higher = more conservative)
+VAD_NEG_THRESHOLD = 0.35       # Non-speech threshold 0-1 (higher = more aggressive filtering)
+VAD_NO_SPEECH_THRESHOLD = 0.6  # Threshold to avoid splitting on pauses (higher = fewer splits)
+
+# Word Timestamps
+WORD_TIMESTAMPS = False  # Set to True for word-level timestamps instead of segment-level
+
+# Post-Processing Filter Parameters
+FILTER_MIN_CONFIDENCE = 0.15          # Remove segments with score below this (0-1)
+FILTER_SIMILARITY_THRESHOLD = 0.35    # Text similarity threshold for grouping duplicates (0-1)
+FILTER_TIME_THRESHOLD = 0.1           # Time overlap threshold for grouping (0-1)
+FILTER_CROSSTALK_TIME_OVERLAP = 0.3   # Time overlap to detect cross-talk duplicates (0-1)
+FILTER_CROSSTALK_TEXT_SIM = 0.4       # Text similarity to confirm cross-talk (0-1)
+
+# Final Quality Filter
+FILTER_GOOD_CONFIDENCE = 0.35         # Threshold for "good" confidence segments
+FILTER_DECENT_CONFIDENCE = 0.25       # Minimum confidence for segments with longer text
+FILTER_MIN_TEXT_LENGTH = 25           # Minimum text length for decent confidence segments
+
+# ==============================================================
+
 # ----------------- Utility -----------------
 def load_mono16k(path):
     x, sr = sf.read(path, always_2d=False)
@@ -199,7 +230,8 @@ print(f"Auto-enrollment done. Built {C} speaker embeddings.")
 # (kept simple for clarity; the seeds are usually good enough)
 
 # 6) Faster-Whisper transcription, but we'll reassign speaker per segment
-fw = WhisperModel("medium", device="cuda", compute_type="float32")
+fw = WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
+print(f"Loaded Whisper model: {WHISPER_MODEL} on {WHISPER_DEVICE} with {WHISPER_COMPUTE_TYPE}")
 
 all_rows = []
 file_speaker_stats = {}  # Track speaker statistics per file
@@ -223,13 +255,13 @@ for audio_file, channel_idx in zip(audio_files, range(C)):
         audio_file,
         vad_filter=True,
         vad_parameters=dict(
-            min_silence_duration_ms=3000,  # 3 seconds silence before splitting
-            min_speech_duration_ms=300,    # Allow short phrases like "yes", "no" (0.3 sec)
-            threshold=0.5,                 # Voice activity threshold
-            neg_threshold=0.35              # Non-voice threshold
+            min_silence_duration_ms=VAD_MIN_SILENCE_MS,
+            min_speech_duration_ms=VAD_MIN_SPEECH_MS,
+            threshold=VAD_THRESHOLD,
+            neg_threshold=VAD_NEG_THRESHOLD
         ),
-        word_timestamps=False,  # segment-level first; you can switch to True for per-word
-        no_speech_threshold=0.6  # Higher threshold to avoid splitting on brief pauses
+        word_timestamps=WORD_TIMESTAMPS,
+        no_speech_threshold=VAD_NO_SPEECH_THRESHOLD
     )
 
     # load raw audio once for slicing
@@ -414,14 +446,14 @@ df = pd.DataFrame(all_rows)
 print(f"Original segments: {len(df)}")
 
 # Step 1: Remove very low confidence segments
-df_filtered = df[df['score'] > 0.15].copy()
-print(f"After basic confidence filtering (score > 0.15): {len(df_filtered)}")
+df_filtered = df[df['score'] > FILTER_MIN_CONFIDENCE].copy()
+print(f"After basic confidence filtering (score > {FILTER_MIN_CONFIDENCE}): {len(df_filtered)}")
 
 # Step 2: Sort by time for better clustering
 df_filtered = df_filtered.sort_values('start_time').reset_index(drop=True)
 
 # Step 3: Find groups of similar transcriptions (more aggressive settings)
-similar_groups = find_similar_groups(df_filtered, time_threshold=0.1, similarity_threshold=0.35)
+similar_groups = find_similar_groups(df_filtered, time_threshold=FILTER_TIME_THRESHOLD, similarity_threshold=FILTER_SIMILARITY_THRESHOLD)
 print(f"Found {len(similar_groups)} groups of similar transcriptions")
 
 # Step 4: For each group, keep only the one with highest score
@@ -508,7 +540,7 @@ def remove_crosstalk_duplicates(df):
                     
                     # If significant overlap and similar text, it's the same speech
                     # Remove the cross-talk version (keep the one from speaker's own mic)
-                    if time_ovl > 0.3 or (time_ovl > 0.1 and text_sim > 0.4):
+                    if time_ovl > FILTER_CROSSTALK_TIME_OVERLAP or (time_ovl > 0.1 and text_sim > FILTER_CROSSTALK_TEXT_SIM):
                         indices_to_remove.add(i)
                         break
     
@@ -519,8 +551,8 @@ print(f"After removing cross-talk duplicates: {len(clean_df)}")
 
 # Step 6: Final quality filter - be more selective
 final_df = clean_df[
-    (clean_df['score'] > 0.35) |  # Good confidence segments
-    ((clean_df['score'] > 0.25) & (clean_df['text'].str.len() > 25))  # Or decent confidence with longer text
+    (clean_df['score'] > FILTER_GOOD_CONFIDENCE) |  # Good confidence segments
+    ((clean_df['score'] > FILTER_DECENT_CONFIDENCE) & (clean_df['text'].str.len() > FILTER_MIN_TEXT_LENGTH))  # Or decent confidence with longer text
 ].copy()
 
 print(f"After final quality filtering: {len(final_df)}")
